@@ -17,6 +17,7 @@ namespace WinRMSharp.Contracts
                 new XmlQualifiedName("b", Namespace.CIM_BINDING),
                 new XmlQualifiedName("n", Namespace.ENUMERATION),
                 new XmlQualifiedName("x", Namespace.TRANSFER),
+                new XmlQualifiedName("wsmid", Namespace.WSMID),
                 new XmlQualifiedName("w", Namespace.WSMAN_0),
                 new XmlQualifiedName("p", Namespace.WSMAN_1),
                 new XmlQualifiedName("rsp", Namespace.WSMAN_SHELL),
