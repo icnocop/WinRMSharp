@@ -1,4 +1,5 @@
-﻿using System.Reflection;
+﻿using System.Collections;
+using System.Reflection;
 using System.Xml.Linq;
 using System.Xml.Serialization;
 using WinRMSharp.Contracts;
@@ -25,8 +26,18 @@ namespace WinRMSharp.Utils
 
         public static string Serialize<T>(T obj)
         {
-            // Extract namespaces actually used from the type
-            HashSet<string> usedNamespaces = ExtractNamespacesFromType(typeof(T));
+            if (obj == null)
+                throw new ArgumentNullException(nameof(obj));
+
+            // Extract namespaces actually used from the type AND instance
+            HashSet<string> usedNamespaces = ExtractNamespacesFromInstance(obj);
+
+            // Always include the xsi and xsd namespaces first
+            usedNamespaces = new HashSet<string>(new[]
+            {
+                Namespace.XML_SCHEMA_INSTANCE,
+                Namespace.XML_SCHEMA
+            }.Concat(usedNamespaces));
 
             // Build XmlSerializerNamespaces with desired prefixes
             XmlSerializerNamespaces namespaces = new XmlSerializerNamespaces();
@@ -53,9 +64,12 @@ namespace WinRMSharp.Utils
             return writer.ToString();
         }
 
-        private static HashSet<string> ExtractNamespacesFromType(Type type)
+        private static HashSet<string> ExtractNamespacesFromInstance(object obj)
         {
             HashSet<string> namespaces = new HashSet<string>();
+
+            // Get the actual runtime type of the object
+            Type type = obj.GetType();
 
             // Check for XmlRoot attribute
             XmlRootAttribute? xmlRootAttr = type
@@ -76,8 +90,15 @@ namespace WinRMSharp.Utils
             }
 
             // Process properties
-            foreach (PropertyInfo? property in type.GetProperties())
+            foreach (PropertyInfo property in type.GetProperties())
             {
+                // Get the property value
+                object? propertyValue = property.GetValue(obj);
+
+                // Skip if property value is null - don't include its namespaces
+                if (propertyValue == null)
+                    continue;
+
                 // Check for XmlElement attribute
                 XmlElementAttribute? xmlElementAttr = property
                     .GetCustomAttributes(typeof(XmlElementAttribute), true)
@@ -105,7 +126,7 @@ namespace WinRMSharp.Utils
                     && !propertyType.IsArray
                     && !propertyType.IsGenericType)
                 {
-                    HashSet<string> nestedNamespaces = ExtractNamespacesFromType(propertyType);
+                    HashSet<string> nestedNamespaces = ExtractNamespacesFromInstance(propertyValue);
                     foreach (string ns in nestedNamespaces)
                     {
                         namespaces.Add(ns);
@@ -113,22 +134,52 @@ namespace WinRMSharp.Utils
                 }
 
                 // Handle arrays and collections
-                if (propertyType.IsArray ||
-                    (propertyType.IsGenericType && propertyType.GetGenericTypeDefinition() == typeof(List<>)))
+                if (propertyType.IsArray)
                 {
-                    Type elementType = propertyType.IsArray
-                        ? propertyType.GetElementType()!
-                        : propertyType.GetGenericArguments()[0];
+                    Type elementType = propertyType.GetElementType()!;
+                    Array array = (Array)propertyValue;
 
+                    // If array is not empty and elements are complex types
+                    if (array.Length > 0
+                        && elementType != typeof(string)
+                        && !elementType.IsPrimitive
+                        && !elementType.IsEnum
+                        && elementType.Namespace != "System")
+                    {
+                        foreach (object item in array)
+                        {
+                            if (item != null)
+                            {
+                                HashSet<string> nestedNamespaces = ExtractNamespacesFromInstance(item);
+                                foreach (string ns in nestedNamespaces)
+                                {
+                                    namespaces.Add(ns);
+                                }
+                            }
+                        }
+                    }
+                }
+                else if (propertyType.IsGenericType && propertyType.GetGenericTypeDefinition() == typeof(List<>))
+                {
+                    Type elementType = propertyType.GetGenericArguments()[0];
+                    IEnumerable collection = (IEnumerable)propertyValue;
+
+                    // If collection has elements and they are complex types
                     if (elementType != typeof(string)
                         && !elementType.IsPrimitive
                         && !elementType.IsEnum
                         && elementType.Namespace != "System")
                     {
-                        HashSet<string> nestedNamespaces = ExtractNamespacesFromType(elementType);
-                        foreach (string ns in nestedNamespaces)
+                        foreach (object item in collection)
                         {
-                            namespaces.Add(ns);
+                            if (item != null)
+                            {
+                                HashSet<string> nestedNamespaces = ExtractNamespacesFromInstance(item);
+                                foreach (string ns in nestedNamespaces)
+                                {
+                                    namespaces.Add(ns);
+                                }
+                            }
                         }
                     }
                 }
