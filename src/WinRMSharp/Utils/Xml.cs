@@ -1,4 +1,5 @@
-﻿using System.Xml.Linq;
+﻿using System.Reflection;
+using System.Xml.Linq;
 using System.Xml.Serialization;
 using WinRMSharp.Contracts;
 
@@ -24,33 +25,27 @@ namespace WinRMSharp.Utils
 
         public static string Serialize<T>(T obj)
         {
-            // First pass: Generate temporary XML to detect used namespaces
-            string tempXml = SerializeTemp(obj);
-
-            // Extract namespaces actually used in the XML
-            HashSet<string> usedNamespaces = ExtractNamespaces(tempXml);
+            // Extract namespaces actually used from the type
+            HashSet<string> usedNamespaces = ExtractNamespacesFromType(typeof(T));
 
             // Build XmlSerializerNamespaces with desired prefixes
             XmlSerializerNamespaces namespaces = new XmlSerializerNamespaces();
             foreach (string nsUri in usedNamespaces)
             {
-                string? prefix = NamespaceToPrefix[nsUri];
+                // Check if the namespace URI exists in the dictionary
+                if (!NamespaceToPrefix.TryGetValue(nsUri, out string? prefix))
+                {
+                    throw new InvalidOperationException($"Unknown namespace URI encountered: {nsUri}");
+                }
+
                 namespaces.Add(prefix, nsUri);
             }
 
-            // Second pass: Serialize with filtered namespaces
-            return SerializeFinal(obj, namespaces);
+            // Serialize with filtered namespaces
+            return Serialize(obj, namespaces);
         }
 
-        private static string SerializeTemp<T>(T obj)
-        {
-            XmlSerializer serializer = new XmlSerializer(typeof(T));
-            using StringWriter writer = new StringWriter();
-            serializer.Serialize(writer, obj);
-            return writer.ToString();
-        }
-
-        private static string SerializeFinal<T>(T obj, XmlSerializerNamespaces namespaces)
+        private static string Serialize<T>(T obj, XmlSerializerNamespaces namespaces)
         {
             XmlSerializer serializer = new XmlSerializer(typeof(T));
             using StringWriter writer = new StringWriter();
@@ -58,16 +53,84 @@ namespace WinRMSharp.Utils
             return writer.ToString();
         }
 
-        private static HashSet<string> ExtractNamespaces(string xml)
+        private static HashSet<string> ExtractNamespacesFromType(Type type)
         {
-            XDocument doc = XDocument.Parse(xml);
             HashSet<string> namespaces = new HashSet<string>();
 
-            foreach (XElement? element in doc.Descendants())
+            // Check for XmlRoot attribute
+            XmlRootAttribute? xmlRootAttr = type
+                .GetCustomAttributes(typeof(XmlRootAttribute), true)
+                .FirstOrDefault() as XmlRootAttribute;
+            if (xmlRootAttr?.Namespace != null)
             {
-                foreach (XAttribute? attr in element.Attributes().Where(a => a.IsNamespaceDeclaration))
+                namespaces.Add(xmlRootAttr.Namespace);
+            }
+
+            // Check for XmlType attribute
+            XmlTypeAttribute? xmlTypeAttr = type
+                .GetCustomAttributes(typeof(XmlTypeAttribute), true)
+                .FirstOrDefault() as XmlTypeAttribute;
+            if (xmlTypeAttr?.Namespace != null)
+            {
+                namespaces.Add(xmlTypeAttr.Namespace);
+            }
+
+            // Process properties
+            foreach (PropertyInfo? property in type.GetProperties())
+            {
+                // Check for XmlElement attribute
+                XmlElementAttribute? xmlElementAttr = property
+                    .GetCustomAttributes(typeof(XmlElementAttribute), true)
+                    .FirstOrDefault() as XmlElementAttribute;
+                if (xmlElementAttr?.Namespace != null)
                 {
-                    namespaces.Add(attr.Value.Trim());
+                    namespaces.Add(xmlElementAttr.Namespace);
+                }
+
+                // Check for XmlAttribute attribute
+                XmlAttributeAttribute? xmlAttributeAttr = property
+                    .GetCustomAttributes(typeof(XmlAttributeAttribute), true)
+                    .FirstOrDefault() as XmlAttributeAttribute;
+                if (xmlAttributeAttr?.Namespace != null)
+                {
+                    namespaces.Add(xmlAttributeAttr.Namespace);
+                }
+
+                // Recursively check property types that are complex objects
+                Type propertyType = property.PropertyType;
+                if (propertyType != typeof(string)
+                    && !propertyType.IsPrimitive
+                    && !propertyType.IsEnum
+                    && propertyType.Namespace != "System"
+                    && !propertyType.IsArray
+                    && !propertyType.IsGenericType)
+                {
+                    HashSet<string> nestedNamespaces = ExtractNamespacesFromType(propertyType);
+                    foreach (string ns in nestedNamespaces)
+                    {
+                        namespaces.Add(ns);
+                    }
+                }
+
+                // Handle arrays and collections
+                if (propertyType.IsArray ||
+                    (propertyType.IsGenericType && propertyType.GetGenericTypeDefinition() == typeof(List<>)))
+                {
+                    Type elementType = propertyType.IsArray
+                        ? propertyType.GetElementType()!
+                        : propertyType.GetGenericArguments()[0];
+
+                    if (elementType != typeof(string)
+                        && !elementType.IsPrimitive
+                        && !elementType.IsEnum
+                        && elementType.Namespace != "System")
+                    {
+                        HashSet<string> nestedNamespaces = ExtractNamespacesFromType(elementType);
+                        foreach (string ns in nestedNamespaces)
+                        {
+                            namespaces.Add(ns);
+                        }
+                    }
                 }
             }
 

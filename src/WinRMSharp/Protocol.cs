@@ -90,11 +90,11 @@ namespace WinRMSharp
 
             return new IdentifyResponse
             {
-                ProtocolVersion = root.Descendants(ns + "ProtocolVersion").Single()?.Value
+                ProtocolVersion = root.Descendants(ns + "ProtocolVersion").SingleOrDefault()?.Value
                     ?? throw new WinRMException("Failed to extract ProtocolVersion"),
-                ProductVendor = root.Descendants(ns + "ProductVendor").Single()?.Value
+                ProductVendor = root.Descendants(ns + "ProductVendor").SingleOrDefault()?.Value
                     ?? throw new WinRMException("Failed to extract ProductVendor"),
-                ProductVersion = root.Descendants(ns + "ProductVersion").Single()?.Value
+                ProductVersion = root.Descendants(ns + "ProductVersion").SingleOrDefault()?.Value
                     ?? throw new WinRMException("Failed to extract ProductVersion")
             };
         }
